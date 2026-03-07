@@ -12,7 +12,7 @@ import { calculateDamage } from '../utils/combatHelpers';
 const CombatArena = ({ p1Team, p2Team, onEndCombat, useCooldown }) => {
   const [p1, setP1] = useState(p1Team);
   const [p2, setP2] = useState(p2Team);
-  const [turn, setTurn] = useState(1);
+  const [turn, setTurn,] = useState(1);
   const [selectedAttackerId, setSelectedAttackerId] = useState(null);
   const [logs, setLogs] = useState(["¡La batalla ha comenzado!"]);
   const logsEndRef = useRef(null);
@@ -56,8 +56,8 @@ const CombatArena = ({ p1Team, p2Team, onEndCombat, useCooldown }) => {
     const target = defenders.find(u => u.id === targetId);
     if (!attacker || !target) return;
     
-    // Cálculo de daño (usando helper para evitar llamadas aleatorias dispersas)
-    const { isCrit, damage } = calculateDamage(attacker);
+    // Cálculo de daño
+    const { isCrit, damage, extraAttacks } = calculateDamage(attacker, target);
     
     // Tipos de ataque
     const attackTypes = Array.isArray(attacker.attackTypes) 
@@ -65,54 +65,110 @@ const CombatArena = ({ p1Team, p2Team, onEndCombat, useCooldown }) => {
       : attacker.attackType ? [attacker.attackType] : ['melee'];
     const primaryAttackType = attackTypes[0] || 'melee';
     const attackConfig = ATTACK_TYPES[primaryAttackType] || ATTACK_TYPES.melee;
-    
-    // Aplicar daño
-    const nextP1 = [...p1];
-    const nextP2 = [...p2];
-    const currentAttackers = turn === 1 ? nextP1 : nextP2;
-    const currentDefenders = turn === 1 ? nextP2 : nextP1;
-    const targetIdx = currentDefenders.findIndex(u => u.id === targetId);
-    
-    currentDefenders[targetIdx].currentHp = Math.max(0, currentDefenders[targetIdx].currentHp - damage);
-    
-    // Aplicar cooldown si está activado
-    if (useCooldown) {
-      const attackerIdx = currentAttackers.findIndex(u => u.id === attackerId);
-      currentAttackers[attackerIdx].currentCooldown = attacker.maxCooldown || 0;
-    }
-    
-    // Formato del log
+    // Formato del log (calcular antes de usarlo)
     const typeLabel = attackTypes.length > 1 
       ? `${attackConfig.label} (+${attackTypes.length - 1})` 
       : attackConfig.label;
-    
     const speed = attacker.speed ?? 10;
     const special = attacker.special ?? 10;
     const speedBonus = speed >= 70 ? '⚡' : '';
     const specialBonus = special >= 70 ? '✨' : '';
     const factionLabel = getFactionEmoji(attacker.faction);
+
+    // Aplicar daño y combos
+    let nextP1 = [...p1];
+    let nextP2 = [...p2];
+    const currentAttackers = turn === 1 ? nextP1 : nextP2;
+    const currentDefenders = turn === 1 ? nextP2 : nextP1;
+    const targetIdx = currentDefenders.findIndex(u => u.id === targetId);
+
+    /// OLD VERSION
+    // let totalHits = 1 + (extraAttacks || 0);
+    // let totalDamage = 0;
+    // for (let hit = 0; hit < totalHits; hit++) {
+    //   currentDefenders[targetIdx].currentHp = Math.max(0, currentDefenders[targetIdx].currentHp - damage);
+    //   totalDamage += damage;
+    //   if (currentDefenders[targetIdx].currentHp === 0) break;
+    // }
+
+    // 👇 Reemplazar el bloque de aplicación de daño en executeAttack():
     
-    addLog(`${isCrit ? '💥 CRIT! ' : '⚔️ '}${factionLabel} ${attacker.name} [${typeLabel}]${speedBonus}${specialBonus} -> ${target.name} (-${damage} HP)`);
+    /// NEW VERSION - Aplicar daño del ataque principal + combos en un solo bloque para evitar problemas de sincronización
+    let totalDamage = damage;
+    let hits = 1 + extraAttacks;
+
+    for (let i = 0; i < hits; i++) {
+      currentDefenders[targetIdx].currentHp = Math.max(0, currentDefenders[targetIdx].currentHp - damage);
+      if (currentDefenders[targetIdx].currentHp <= 0) break;
+    }
+    totalDamage = damage * hits;
+
+    // Aplicar cooldown al atacante
+    if (useCooldown) {
+      const attackerIdx = currentAttackers.findIndex(u => u.id === attackerId);
+      currentAttackers[attackerIdx].currentCooldown = attacker.maxCooldown || 0;
+    }
     
+    // Log final con todos los bonificadores
+    addLog(`${isCrit ? '💥 CRIT! ' : '⚔️ '}${factionLabel} ${attacker.name} [${typeLabel}]${speedBonus}${specialBonus} -> ${target.name} (-${totalDamage} HP)${hits > 1 ? ` x${hits} combos` : ''}`);
+
     if (currentDefenders[targetIdx].currentHp === 0) {
       addLog(`💀 ${target.name} fuera de combate.`);
     }
     
-    setP1(nextP1);
-    setP2(nextP2);
+    // === LÓGICA DE SALTO DE TURNO CORREGIDA (SÍNCRONA) ===
+    let currentTurn = turn;
+    let teams = { 1: nextP1, 2: nextP2 };
+    let iterations = 0;
+    const MAX_SKIPS = 10; // Seguridad contra bucles infinitos
+    
+    // Función auxiliar para verificar si un equipo tiene unidades activas
+    const hasActiveUnits = (team) => 
+      team.some(u => u.currentHp > 0 && (u.currentCooldown || 0) <= 0);
+    
+    // Reducir cooldowns de TODOS los equipos antes de verificar (clave para desbloquear)
+    if (useCooldown) {
+      teams[1] = teams[1].map(u => ({ ...u, currentCooldown: Math.max(0, u.currentCooldown - 1) }));
+      teams[2] = teams[2].map(u => ({ ...u, currentCooldown: Math.max(0, u.currentCooldown - 1) }));
+    }
+    
+    // Buscar el próximo turno válido
+    while (iterations < MAX_SKIPS) {
+      const nextTurn = currentTurn === 1 ? 2 : 1;
+      
+      // Si el siguiente equipo tiene unidades activas, detener búsqueda
+      if (hasActiveUnits(teams[nextTurn])) {
+        currentTurn = nextTurn;
+        break;
+      }
+      
+      // Si no, saltar turno y continuar buscando
+      addLog(`⏭️ Jugador ${nextTurn}: sin unidades activas. Salta turno.`);
+      currentTurn = nextTurn;
+      iterations++;
+    }
+    
+    // Si después de MAX_SKIPS no hay nadie activo, forzar fin de combate
+    if (iterations >= MAX_SKIPS && !hasActiveUnits(teams[1]) && !hasActiveUnits(teams[2])) {
+      addLog("⚠️ Ningún equipo tiene unidades activas. Combate empatado.");
+      setTimeout(() => {
+        alert("¡Empate! Ningún equipo puede actuar.");
+        onEndCombat();
+      }, 400);
+      return;
+    }
+    
+    // === ACTUALIZAR ESTADOS ===
+    setP1(teams[1]);
+    setP2(teams[2]);
+    setTurn(currentTurn);
     setSelectedAttackerId(null);
     
-    // Cambiar turno
-    const nextTurn = turn === 1 ? 2 : 1;
-    setTurn(nextTurn);
-    
-    // Reducir cooldowns al cambiar turno
-    if (useCooldown) {
-      if (nextTurn === 1) {
-        setP1(prev => prev.map(u => ({ ...u, currentCooldown: Math.max(0, u.currentCooldown - 1) })));
-      } else {
-        setP2(prev => prev.map(u => ({ ...u, currentCooldown: Math.max(0, u.currentCooldown - 1) })));
-      }
+    // Notificación visual de salto de turno (solo UI, no afecta lógica)
+    if (iterations > 0) {
+      setTimeout(() => {
+        addLog(`▶️ Turno del Jugador ${currentTurn}`);
+      }, 500);
     }
   };
 
@@ -257,6 +313,47 @@ const CombatArena = ({ p1Team, p2Team, onEndCombat, useCooldown }) => {
     );
   };
 
+  // const checkAndSkipTurn = (currentTurn, currentP1, currentP2, skipCount = 0) => {
+    
+  //   if (skipCount > 3) {
+  //     addLog("⚠️ No hay unidades activas en ninguno de los equipos. Fin del combate o error de estado.");
+  //     return;
+  //   }
+    
+  //   const team = currentTurn === 1 ? currentP1 : currentP2;
+  //   const hasActiveUnit = team.some(u => u.currentHp > 0 && (u.currentCooldown || 0) <= 0);
+
+  //   if (!hasActiveUnit) {
+  //     addLog(`⏭️ Jugador ${currentTurn}: todas las unidades cansadas. Salta turno.`);
+  //     setTimeout(() => {
+  //       const nextTurn = currentTurn === 1 ? 2 : 1;
+  //       setTurn(nextTurn);
+
+  //       if (useCooldown) {
+  //         if (nextTurn === 1) {
+  //           setP1(prev => prev.map(u => ({ ...u, currentCooldown: Math.max(0, u.currentCooldown - 1) })));
+  //         } else {
+  //           setP2(prev => prev.map(u => ({ ...u, currentCooldown: Math.max(0, u.currentCooldown - 1) })));
+  //         }
+  //       }
+
+  //       const nextTeam = nextTurn === 1 ? currentP1 : currentP2;
+  //       const nextHasActive = nextTeam.some(u => u.currentHp > 0 && (u.currentCooldown || 0) <= 0);
+
+  //       if (!nextHasActive) {
+  //         addLog(`⏭️ Jugador ${nextTurn}: también sin unidades activas. Continúa el salto...`);
+  //         setTimeout(() => {
+  //           checkAndSkipTurn(nextTurn === 1 ? 2 : 1, currentP1, currentP2);
+  //         }, 500);
+  //       }
+  //     }, 500);
+
+  //     return true;
+  //   }
+
+  //   return false;
+  // };
+
   return (
     <div className="flex flex-col h-full animate-in zoom-in-95 duration-300">
       {/* Header del combate */}
@@ -306,6 +403,8 @@ const CombatArena = ({ p1Team, p2Team, onEndCombat, useCooldown }) => {
       </div>
     </div>
   );
+
+  
 };
 
 export default CombatArena;

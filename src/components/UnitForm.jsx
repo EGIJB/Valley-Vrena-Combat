@@ -190,8 +190,11 @@ const UnitForm = ({ onAddUnit }) => {
   const [attackTypes, setAttackTypes] = useState(['melee']);
   const [image, setImage] = useState(null);
   const [scale, setScale] = useState(100);
+  const [imageOffsetX, setImageOffsetX] = useState(0); // -50 a 50 (%)
+  const [imageOffsetY, setImageOffsetY] = useState(0); // -50 a 50 (%)
   const [error, setError] = useState('');
   const fileInputRef = useRef(null);
+  
 
   const [speed, setSpeed] = useState(STAT_CONFIGS.speed.default);
   const [agility, setAgility] = useState(STAT_CONFIGS.agility.default);
@@ -239,10 +242,12 @@ const UnitForm = ({ onAddUnit }) => {
         speed: Number(parseFloat(speed).toFixed(STAT_CONFIGS.speed.decimals)),
         agility: Number(agility), special: Number(special),
         range: Number(parseFloat(range).toFixed(STAT_CONFIGS.range.decimals)),
-        combos: Number(combos), image: image || DEFAULT_IMAGE, scale: Number(scale), selectedForDraft: true
+        combos: Number(combos), image: image || DEFAULT_IMAGE, scale: Number(scale),imageOffsetX: Number(imageOffsetX),
+        imageOffsetY: Number(imageOffsetY), selectedForDraft: true, selectedForDraft: true
       };
       console.log('✅ Unidad registrada:', newUnit);
       onAddUnit(newUnit, faction);
+
       // Reset
       setName(''); setHp(100); setAttack(15); setCritChance(10); setCritMult(1.5); setCooldown(1);
       setAttackTypes(['melee']);
@@ -250,6 +255,7 @@ const UnitForm = ({ onAddUnit }) => {
       setSpecial(STAT_CONFIGS.special.default); setRange(STAT_CONFIGS.range.default);
       setCombos(STAT_CONFIGS.combos.default);
       setImage(null); setScale(100);
+      setImageOffsetX(0); setImageOffsetY(0);
       if(fileInputRef.current) fileInputRef.current.value = '';
       setActiveSubTab('basic');
     } catch (err) {
@@ -312,14 +318,59 @@ const UnitForm = ({ onAddUnit }) => {
               <button type="button" onClick={useDefaultImage} className="mt-2 text-xs text-indigo-400 hover:text-indigo-300 underline">Usar imagen por defecto</button>
             </div>
             {image && (
-              <div className="bg-slate-900 p-2 rounded border border-slate-700">
-                <label className="block text-sm text-slate-300 mb-2">Escala: {scale}%</label>
-                <input type="range" min="50" max="200" value={scale} onChange={e => setScale(e.target.value)} className="w-full mb-2" />
-                <div className="w-20 h-20 mx-auto overflow-hidden bg-black rounded border border-slate-600 flex items-center justify-center">
-                  <img src={image} style={{ transform: `scale(${scale / 100})` }} className="object-cover" alt="Preview" />
-                </div>
-              </div>
-            )}
+  <div className="bg-slate-900 p-2 rounded border border-slate-700">
+    <label className="block text-sm text-slate-300 mb-2">Escala: {scale}%</label>
+    <input type="range" min="50" max="200" value={scale} onChange={e => setScale(e.target.value)} className="w-full mb-2" />
+    
+    {/* Preview con posición editable */}
+    <div className="w-20 h-20 mx-auto overflow-hidden bg-black rounded border border-slate-600 flex items-center justify-center relative">
+      <img 
+        src={image} 
+        style={{ 
+          transform: `scale(${scale / 100}) translate(${imageOffsetX}%, ${imageOffsetY}%)`,
+          transition: 'transform 0.1s ease'
+        }} 
+        className="object-cover select-none" 
+        alt="Preview"
+        draggable={false}
+      />
+    </div>
+    
+    {/* Controles de posición */}
+    <div className="mt-2 grid grid-cols-2 gap-2">
+      <div>
+        <label className="text-[9px] text-slate-400 block">Posición X: {imageOffsetX}%</label>
+        <input 
+          type="range" 
+          min="-50" 
+          max="50" 
+          value={imageOffsetX} 
+          onChange={e => setImageOffsetX(Number(e.target.value))}
+          className="w-full accent-blue-500"
+        />
+      </div>
+      <div>
+        <label className="text-[9px] text-slate-400 block">Posición Y: {imageOffsetY}%</label>
+        <input 
+          type="range" 
+          min="-50" 
+          max="50" 
+          value={imageOffsetY} 
+          onChange={e => setImageOffsetY(Number(e.target.value))}
+          className="w-full accent-blue-500"
+        />
+      </div>
+    </div>
+    
+    <button 
+      type="button" 
+      onClick={() => { setImageOffsetX(0); setImageOffsetY(0); }}
+      className="mt-2 text-[9px] text-indigo-400 hover:text-indigo-300 underline w-full text-center"
+    >
+      ↺ Centrar imagen
+    </button>
+  </div>
+)}
           </div>
         )}
 

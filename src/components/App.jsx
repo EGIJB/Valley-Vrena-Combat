@@ -40,8 +40,15 @@ export default function App() {
   
   // Configuración global
   const [settings, setSettings] = useState({
-    enableCooldown: true
+    enableCooldown: true,
+    balance: {
+    byCount: false,      // Balance por cantidad de unidades
+    byPower: false,      // Balance por poder (special + attack)
+    allowDuplicates: true // Permitir unidades con mismo nombre
+  }
   });
+
+  
 
   // Helpers para obtener/establecer unidades según pestaña
   const getCurrentUnits = () => {
@@ -268,6 +275,7 @@ export default function App() {
                   setJsonPreview={setJsonPreview}
                   leftPanelCollapsed={leftPanelCollapsed}
                   allUnits={{ vrenas, allies, enemies }}
+                  settings={settings}
                 />
               </div>
             </div>

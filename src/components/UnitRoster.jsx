@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { RefreshCw, FolderOpen, Download, Trash2, Edit2, Check, X, Gauge, Wind, Sparkles, Ruler, Repeat, Hand, BowArrow, Target } from 'lucide-react';
+import { RefreshCw, FolderOpen, Download, Trash2, Edit2, Check, X, Gauge, Wind, Sparkles, Ruler, Repeat, Hand, BowArrow, Target, ImageIcon, Move, Swords } from 'lucide-react';
 import { ATTACK_TYPES } from '../config/attackTypes';
 import { STAT_CONFIGS } from '../config/statConfigs';
 import { FACTIONS } from '../config/factions';
@@ -18,10 +18,15 @@ const UnitRoster = ({
   setExportStatus,
   setShowExportData,
   setJsonPreview, 
-  allUnits 
+  allUnits,
+  settings,
 }) => {
   const [editingId, setEditingId] = useState(null);
   const [editValues, setEditValues] = useState({});
+  // ✅ Estado para modal de edición de imagen
+  const [showImageModal, setShowImageModal] = useState(false);
+  const [showVsSelector, setShowVsSelector] = useState(false);
+  const [vsTarget, setVsTarget] = useState(null); // 'vrena' | 'ally' | 'enemy' | null
 
   // Toggle selección para combate
   const toggleSelection = (id) => 
@@ -44,7 +49,10 @@ const UnitRoster = ({
       agility: unit.agility ?? STAT_CONFIGS.agility.default,
       special: unit.special ?? STAT_CONFIGS.special.default,
       range: unit.range ?? STAT_CONFIGS.range.default,
-      combos: unit.combos ?? STAT_CONFIGS.combos.default
+      combos: unit.combos ?? STAT_CONFIGS.combos.default,
+      // Incluir offsets de imagen
+      imageOffsetX: unit.imageOffsetX ?? 0,
+      imageOffsetY: unit.imageOffsetY ?? 0
     });
   };
 
@@ -54,9 +62,13 @@ const UnitRoster = ({
       ...editValues, 
       maxHp: Number(editValues.hp),
       speed: Number(parseFloat(editValues.speed).toFixed(STAT_CONFIGS.speed.decimals)),
-      range: Number(parseFloat(editValues.range).toFixed(STAT_CONFIGS.range.decimals))
+      range: Number(parseFloat(editValues.range).toFixed(STAT_CONFIGS.range.decimals)),
+      // Guardar offsets de imagen
+      imageOffsetX: editValues.imageOffsetX ?? 0,
+      imageOffsetY: editValues.imageOffsetY ?? 0
     } : u));
     setEditingId(null);
+    setShowImageModal(false);
   };
 
   // Toggle tipos de ataque en edición
@@ -75,16 +87,100 @@ const UnitRoster = ({
   };
 
   // Ruleta para iniciar combate aleatorio
-  const handleRoulette = () => {
-    const selectedUnits = units.filter(u => u.selectedForDraft);
-    if (selectedUnits.length < 2) return;
-    
-    const shuffled = [...selectedUnits].sort(() => 0.5 - Math.random());
+ // Reemplazar la función handleRoulette completa:
+const handleRoulette = (targetFaction = null) => {
+  // Si no se especifica facción objetivo, luchar contra sí mismo (comportamiento original)
+  const opponentFaction = targetFaction || rosterTab;
+  
+  // Obtener unidades seleccionadas de ambas facciones
+  const teamA = units.filter(u => u.selectedForDraft);
+  const teamB = opponentFaction === rosterTab 
+    ? [...teamA] // Misma facción: duplicar selección
+    : allUnits[opponentFaction === 'ally' ? 'allies' : opponentFaction === 'enemy' ? 'enemies' : 'vrenas']
+        .filter(u => u.selectedForDraft);
+  
+  // Validar mínimo de unidades
+  if (teamA.length < 1 || teamB.length < 1) {
+    setExportStatus({ 
+      type: 'warning', 
+      message: '⚠️ Selecciona al menos 1 unidad en cada facción' 
+    });
+    setTimeout(() => setExportStatus(''), 3000);
+    return;
+  }
+  
+  // === 1. Dividir/Mezclar equipos ===
+  let p1 = [...teamA];
+  let p2 = [...teamB];
+  
+  // Si es la misma facción, mezclar y dividir aleatoriamente
+  if (opponentFaction === rosterTab && teamA.length >= 2) {
+    const shuffled = [...teamA].sort(() => 0.5 - Math.random());
     const half = Math.ceil(shuffled.length / 2);
-    const p1 = shuffled.slice(0, half).map(u => ({...u, currentHp: u.maxHp, currentCooldown: 0}));
-    const p2 = shuffled.slice(half).map(u => ({...u, currentHp: u.maxHp, currentCooldown: 0}));
-    onStartCombat(p1, p2);
-  };
+    p1 = shuffled.slice(0, half);
+    p2 = shuffled.slice(half);
+  }
+  
+  // === 2. Aplicar balance por cantidad si está activado ===
+  if (settings?.balance?.byCount) {
+    const diff = Math.abs(p1.length - p2.length);
+    if (diff > 0) {
+      const larger = p1.length > p2.length ? p1 : p2;
+      for (let i = 0; i < diff; i++) {
+        const idx = Math.floor(Math.random() * larger.length);
+        larger.splice(idx, 1);
+      }
+      if (p1.length > p2.length) p1 = larger; else p2 = larger;
+    }
+  }
+  
+  // === 3. Aplicar duplicados dinámicos si está activado ===
+  if (settings?.balance?.allowCombatDuplicates) {
+    const minUnits = settings.balance.minUnitsForDuplicate ?? 4;
+    const variance = settings.balance.duplicateVariance ?? 10;
+    
+    const duplicateWithVariance = (team) => {
+      if (team.length >= minUnits) return team;
+      const result = [...team];
+      const needed = minUnits - team.length;
+      for (let i = 0; i < needed; i++) {
+        const base = team[Math.floor(Math.random() * team.length)];
+        const getVariedValue = (value, maxVar) => {
+          if (!maxVar || maxVar === 0) return value;
+          const variation = (Math.random() * 2 - 1) * (maxVar / 100);
+          return Math.max(1, Math.round(value * (1 + variation)));
+        };
+        const duplicate = {
+          ...base,
+          id: `${base.id}_dup_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          name: `${base.name} (x2)`,
+          hp: getVariedValue(base.maxHp, variance),
+          maxHp: getVariedValue(base.maxHp, variance),
+          currentHp: getVariedValue(base.maxHp, variance),
+          attack: getVariedValue(base.attack, variance),
+          currentCooldown: 0
+        };
+        result.push(duplicate);
+      }
+      return result;
+    };
+    
+    p1 = duplicateWithVariance(p1);
+    p2 = duplicateWithVariance(p2);
+  }
+  
+  // === 4. Preparar para combate ===
+  const prepareTeam = (team) => team.map(u => ({
+    ...u, 
+    currentHp: u.maxHp, 
+    currentCooldown: 0
+  }));
+  
+  // Iniciar combate
+  onStartCombat(prepareTeam(p1), prepareTeam(p2));
+  setShowVsSelector(false);
+  setVsTarget(null);
+};
 
   // Exportar unidades a JSON
   const exportUnits = () => {
@@ -99,7 +195,7 @@ const UnitRoster = ({
     
     if (navigator.clipboard?.writeText) {
       navigator.clipboard.writeText(jsonString).then(() => {
-        setExportStatus({ type: 'success', message: `📋 ${getFactionLabel()} copiados` });
+        setExportStatus({ type: 'success', message: `📋 ${rosterTab === 'ally' ? 'Aliados' : rosterTab === 'enemy' ? 'Enemigos' : 'Vrenas'} copiados` });
         setTimeout(() => setExportStatus(''), 3000);
       }).catch(() => {
         setExportStatus({ type: 'warning', message: '💡 Usa el botón "Copiar JSON"' });
@@ -131,7 +227,9 @@ const UnitRoster = ({
               agility: u.agility ?? STAT_CONFIGS.agility.default,
               special: u.special ?? STAT_CONFIGS.special.default,
               range: u.range ?? STAT_CONFIGS.range.default,
-              combos: u.combos ?? STAT_CONFIGS.combos.default
+              combos: u.combos ?? STAT_CONFIGS.combos.default,
+              imageOffsetX: u.imageOffsetX ?? 0,
+              imageOffsetY: u.imageOffsetY ?? 0
             };
           });
           setUnits(migrated);
@@ -226,8 +324,238 @@ const UnitRoster = ({
     );
   };
 
+  // ✅ MODAL FLOTANTE PARA EDICIÓN DE IMAGEN
+  const ImageEditModal = () => {
+    const [tempScale, setTempScale] = useState(editValues.scale ?? 100);
+    const [tempOffsetX, setTempOffsetX] = useState(editValues.imageOffsetX ?? 0);
+    const [tempOffsetY, setTempOffsetY] = useState(editValues.imageOffsetY ?? 0);
+
+    const handleApply = () => {
+      setEditValues(prev => ({
+        ...prev,
+        scale: tempScale,
+        imageOffsetX: tempOffsetX,
+        imageOffsetY: tempOffsetY
+      }));
+      setShowImageModal(false);
+    };
+
+    const handleCancel = () => {
+      setShowImageModal(false);
+    };
+
+    const handleReset = () => {
+      setTempScale(100);
+      setTempOffsetX(0);
+      setTempOffsetY(0);
+    };
+
+    return (
+      <div 
+        className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4 backdrop-blur-sm"
+        onClick={handleCancel}
+      >
+        <div 
+          className="bg-slate-800 rounded-xl border border-slate-700 max-w-sm w-full p-4 shadow-2xl animate-in zoom-in-95 duration-200"
+          onClick={e => e.stopPropagation()}
+        >
+          <div className="flex justify-between items-center mb-3">
+            <h3 className="font-bold text-white flex items-center gap-2">
+              <ImageIcon size={16} className="text-indigo-400" />
+              Ajustar Imagen
+            </h3>
+            <button 
+              onClick={handleCancel} 
+              className="text-slate-400 hover:text-white transition-colors"
+              title="Cerrar"
+            >
+              <X size={18} />
+            </button>
+          </div>
+
+          {/* Preview en tiempo real */}
+          <div className="w-24 h-24 mx-auto mb-4 overflow-hidden bg-black rounded-lg border border-slate-600 flex items-center justify-center relative">
+            <img 
+              src={editValues.image} 
+              style={{ 
+                transform: `scale(${tempScale / 100}) translate(${tempOffsetX}%, ${tempOffsetY}%)`,
+                transition: 'transform 0.1s ease'
+              }} 
+              className="object-cover select-none" 
+              alt="Preview"
+              draggable={false}
+            />
+            <div className="absolute top-1 right-1 bg-indigo-600/80 text-white text-[8px] px-1.5 py-0.5 rounded flex items-center gap-1">
+              <Move size={8} /> Ajustar
+            </div>
+          </div>
+
+          {/* Controles */}
+          <div className="space-y-3">
+            <div>
+              <label className="text-[10px] text-slate-400 flex justify-between mb-1">
+                <span className="flex items-center gap-1"><ImageIcon size={10} /> Escala</span>
+                <span className="text-indigo-400 font-bold">{tempScale}%</span>
+              </label>
+              <input 
+                type="range" 
+                min="50" 
+                max="200" 
+                value={tempScale} 
+                onChange={e => setTempScale(Number(e.target.value))}
+                className="w-full accent-indigo-500 cursor-pointer"
+              />
+            </div>
+            
+            <div>
+              <label className="text-[10px] text-slate-400 flex justify-between mb-1">
+                <span className="flex items-center gap-1"><Move size={10} /> Posición X</span>
+                <span className="text-blue-400 font-bold">{tempOffsetX}%</span>
+              </label>
+              <input 
+                type="range" 
+                min="-50" 
+                max="50" 
+                value={tempOffsetX} 
+                onChange={e => setTempOffsetX(Number(e.target.value))}
+                className="w-full accent-blue-500 cursor-pointer"
+              />
+            </div>
+            
+            <div>
+              <label className="text-[10px] text-slate-400 flex justify-between mb-1">
+                <span className="flex items-center gap-1"><Move size={10} /> Posición Y</span>
+                <span className="text-blue-400 font-bold">{tempOffsetY}%</span>
+              </label>
+              <input 
+                type="range" 
+                min="-50" 
+                max="50" 
+                value={tempOffsetY} 
+                onChange={e => setTempOffsetY(Number(e.target.value))}
+                className="w-full accent-blue-500 cursor-pointer"
+              />
+            </div>
+          </div>
+
+          {/* Botones de acción */}
+          <div className="flex gap-2 mt-4 pt-3 border-t border-slate-700">
+            <button 
+              onClick={handleReset}
+              className="flex-1 bg-slate-700 hover:bg-slate-600 text-white text-[10px] font-bold py-2 rounded transition-colors flex items-center justify-center gap-1"
+            >
+              <RefreshCw size={10} /> Reset
+            </button>
+            <button 
+              onClick={handleCancel}
+              className="flex-1 bg-red-600/80 hover:bg-red-600 text-white text-[10px] font-bold py-2 rounded transition-colors"
+            >
+              Cancelar
+            </button>
+            <button 
+              onClick={handleApply}
+              className="flex-1 bg-green-600 hover:bg-green-500 text-white text-[10px] font-bold py-2 rounded transition-colors"
+            >
+              ✓ Aplicar
+            </button>
+          </div>
+          
+          <p className="text-[8px] text-slate-500 text-center mt-2">
+            💡 Los cambios se aplican al guardar la edición
+          </p>
+        </div>
+      </div>
+    );
+  };
+
   const rosterConfig = FACTIONS[rosterTab] || FACTIONS.vrena;
-  const RosterIcon = rosterConfig.icon;
+
+  // Agregar este componente DENTRO de UnitRoster, antes del return principal:
+
+const VsSelectorModal = () => {
+  const factions = Object.values(FACTIONS).filter(f => f.id !== rosterTab);
+  
+  return (
+    <div 
+      className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4 backdrop-blur-sm"
+      onClick={() => { setShowVsSelector(false); setVsTarget(null); }}
+    >
+      <div 
+        className="bg-slate-800 rounded-xl border border-slate-700 max-w-sm w-full p-4 shadow-2xl animate-in zoom-in-95 duration-200"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex justify-between items-center mb-3">
+          <h3 className="font-bold text-white flex items-center gap-2">
+            <Swords size={16} className="text-red-400" />
+            Seleccionar Oponente
+          </h3>
+          <button 
+            onClick={() => { setShowVsSelector(false); setVsTarget(null); }}
+            className="text-slate-400 hover:text-white transition-colors"
+          >
+            <X size={18} />
+          </button>
+        </div>
+        
+        <p className="text-[10px] text-slate-400 mb-4">
+          ¿Contra qué facción quieres luchar?
+        </p>
+        
+        <div className="space-y-2">
+          {factions.map(faction => {
+            const Icon = faction.icon;
+            const unitCount = faction.id === 'vrena' ? allUnits.vrenas.length : 
+                           faction.id === 'ally' ? allUnits.allies.length : 
+                           allUnits.enemies.length;
+            const hasUnits = unitCount > 0;
+            
+            return (
+              <button
+                key={faction.id}
+                onClick={() => {
+                  if (hasUnits) {
+                    setVsTarget(faction.id);
+                    handleRoulette(faction.id);
+                  }
+                }}
+                disabled={!hasUnits}
+                className={`w-full p-3 rounded-lg border-2 text-left transition-all flex items-center gap-3 ${
+                  hasUnits
+                    ? `border-slate-600 bg-slate-900/50 hover:${faction.borderColor} hover:${faction.bgColor}`
+                    : 'border-slate-700 bg-slate-900/30 opacity-50 cursor-not-allowed'
+                }`}
+              >
+                <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${faction.bgColor}`}>
+                  <Icon size={18} className={faction.textColor} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className={`text-sm font-bold ${faction.textColor}`}>{faction.label}</p>
+                  <p className="text-[9px] text-slate-500">
+                    {unitCount} {unitCount === 1 ? 'unidad' : 'unidades'} disponibles
+                  </p>
+                </div>
+                {!hasUnits && (
+                  <span className="text-[8px] text-slate-500 bg-slate-700 px-2 py-1 rounded">
+                    Vacío
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+        
+        <div className="mt-4 pt-3 border-t border-slate-700">
+          <button
+            onClick={() => handleRoulette()}
+            className="w-full bg-slate-700 hover:bg-slate-600 text-white text-[10px] font-bold py-2 rounded transition-colors"
+          >
+            ⚔️ Luchar contra {rosterTab === 'ally' ? 'Aliados' : rosterTab === 'enemy' ? 'Enemigos' : 'Vrenas'} (misma facción)
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
 
   return (
     <div className="bg-slate-800 p-4 rounded-xl shadow-lg border border-slate-700 flex flex-col h-full">
@@ -323,9 +651,37 @@ const UnitRoster = ({
                       <button onClick={saveEdit} className="bg-green-600 hover:bg-green-500 p-1 rounded text-white transition-colors">
                         <Check size={14}/>
                       </button>
-                      <button onClick={() => setEditingId(null)} className="bg-red-600 hover:bg-red-500 p-1 rounded text-white transition-colors">
+                      <button 
+                        onClick={() => {
+                          setEditingId(null);
+                          setShowImageModal(false);
+                        }} 
+                        className="bg-red-600 hover:bg-red-500 p-1 rounded text-white transition-colors"
+                      >
                         <X size={14}/>
                       </button>
+                    </div>
+
+                    {/* ✅ Preview de imagen CON CLICK PARA ABRIR MODAL */}
+                    <div 
+                      className="w-10 h-10 overflow-hidden bg-black rounded-full border border-slate-600 flex items-center justify-center flex-shrink-0 relative cursor-pointer group hover:border-indigo-500 transition-colors"
+                      onClick={() => setShowImageModal(true)}
+                      title="Click para ajustar imagen"
+                    >
+                      <img 
+                        src={editValues.image} 
+                        style={{ 
+                          transform: `scale(${editValues.scale / 100}%) translate(${editValues.imageOffsetX || 0}%, ${editValues.imageOffsetY || 0}%)`,
+                          transition: 'transform 0.1s ease'
+                        }} 
+                        className="object-cover select-none" 
+                        alt={editValues.name}
+                        draggable={false}
+                      />
+                      {/* Overlay indicador */}
+                      <div className="absolute inset-0 bg-indigo-500/0 group-hover:bg-indigo-500/20 rounded-full flex items-center justify-center transition-colors">
+                        <Edit2 size={12} className="text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                      </div>
                     </div>
                     
                     {/* Stats básicos en grid */}
@@ -384,7 +740,14 @@ const UnitRoster = ({
                         className="w-4 h-4 accent-indigo-500 cursor-pointer flex-shrink-0" 
                       />
                       <div className="w-10 h-10 overflow-hidden bg-black rounded-full border border-slate-600 flex items-center justify-center flex-shrink-0">
-                        <img src={unit.image} style={{ transform: `scale(${unit.scale / 100})` }} className="object-cover" alt={unit.name} />
+                        <img 
+                          src={unit.image} 
+                          style={{ 
+                            transform: `scale(${unit.scale / 100}) translate(${unit.imageOffsetX || 0}%, ${unit.imageOffsetY || 0}%)` 
+                          }} 
+                          className="object-cover" 
+                          alt={unit.name} 
+                        />
                       </div>
                       <div className="cursor-pointer min-w-0" onClick={() => startEditing(unit)}>
                         <p className="text-white font-semibold text-sm flex items-center gap-1 truncate">
@@ -411,10 +774,10 @@ const UnitRoster = ({
         )}
       </div>
 
-      {/* === BOTÓN DE COMBATE === */}
+      {/* === BOTÓN DE COMBATE CON SELECTOR DE OPONENTE === */}
       <button 
-        onClick={handleRoulette} 
-        disabled={units.filter(u => u.selectedForDraft).length < 2} 
+        onClick={() => setShowVsSelector(true)}
+        disabled={units.filter(u => u.selectedForDraft).length < 1}
         className={`w-full font-bold py-3 rounded-lg flex justify-center items-center gap-2 text-lg transition-all ${
           rosterTab === 'enemy'
             ? 'bg-red-600 hover:bg-red-500 disabled:opacity-50 disabled:cursor-not-allowed text-white'
@@ -423,8 +786,11 @@ const UnitRoster = ({
             : 'bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white'
         }`}
       >
-        <RefreshCw size={20} /> Luchar con {getFactionLabel()}
+        <Swords size={20} /> Luchar vs...
       </button>
+
+      {/* Renderizar modal si está activo */}
+      {showVsSelector && <VsSelectorModal />}
     </div>
   );
 };
