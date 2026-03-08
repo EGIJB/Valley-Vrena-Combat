@@ -18,7 +18,7 @@ const GlobalSettings = ({ settings, setSettings }) => {
   };
 
   return (
-    <div className="bg-slate-800 p-4 rounded-xl shadow-lg border border-slate-700 h-full">
+    <div className="bg-slate-800 p-4 rounded-xl shadow-lg border border-slate-700 h-auto">
       <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
         <Settings size={20} className="text-indigo-400" /> 
         Ajustes Globales

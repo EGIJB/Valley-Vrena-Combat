@@ -9,6 +9,10 @@ import UnitForm from './UnitForm';
 import UnitRoster from './UnitRoster';
 import CombatArena from './CombatArena';
 import GlobalSettings from './GlobalSettings';
+import TeamBuilder from './TeamBuilder';
+
+// Importar utilidades
+import { moveUnitBetweenFactions } from '../utils/unitMover';
 
 /**
  * Aplicación Principal - Valley'Vrena Combat Simulator
@@ -37,6 +41,9 @@ export default function App() {
   const [lastUpdate, setLastUpdate] = useState(new Date());
   const [isUpdating, setIsUpdating] = useState(false);
   const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false);
+
+  const [showTeamBuilder, setShowTeamBuilder] = useState(false);
+  
   
   // Configuración global
   const [settings, setSettings] = useState({
@@ -86,6 +93,12 @@ export default function App() {
     setView('combat');
   };
 
+  const handleConfirmTeams = (team1, team2) => {
+    setShowTeamBuilder(false);
+    setCombatTeams({ p1: team1, p2: team2 });
+    setView('combat');
+  };
+
   // Estadísticas de unidades
   const getUnitStats = (units) => {
     const stats = { melee: 0, range: 0, distance: 0, total: units.length };
@@ -98,6 +111,30 @@ export default function App() {
 
   const currentUnits = getCurrentUnits();
   const unitStats = getUnitStats(currentUnits);
+
+  // Handler para mover unidades entre facciones
+  const handleMoveUnit = ({ unitId, fromFaction, toFaction }) => {
+    const result = moveUnitBetweenFactions({
+      unitId,
+      fromFaction,
+      toFaction,
+      lists: { vrena: vrenas, ally: allies, enemy: enemies }
+    });
+    
+    if (result.success) {
+      // Actualizar estados con las listas actualizadas
+      setVrenas(result.updatedLists.vrena);
+      setAllies(result.updatedLists.ally);
+      setEnemies(result.updatedLists.enemy);
+      
+      // Mostrar notificación
+      setExportStatus({ type: 'success', message: result.message });
+      setTimeout(() => setExportStatus(''), 3000);
+    } else {
+      setExportStatus({ type: 'error', message: `❌ ${result.error}` });
+      setTimeout(() => setExportStatus(''), 3000);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-indigo-500/30">
@@ -274,8 +311,10 @@ export default function App() {
                   setShowExportData={setShowExportData}
                   setJsonPreview={setJsonPreview}
                   leftPanelCollapsed={leftPanelCollapsed}
-                  allUnits={{ vrenas, allies, enemies }}
+                  allUnits={{ vrena: vrenas, ally: allies, enemy: enemies }}
                   settings={settings}
+                  onMoveUnit={handleMoveUnit}
+                  onOpenTeamBuilder={() => setShowTeamBuilder(true)}
                 />
               </div>
             </div>
@@ -339,6 +378,15 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {showTeamBuilder && (
+        <TeamBuilder
+          allUnits={{ vrena: vrenas, ally: allies, enemy: enemies }}
+          onCancel={() => setShowTeamBuilder(false)}
+          onConfirm={handleConfirmTeams}
+        />
+      )}
+
     </div>
   );
 }
