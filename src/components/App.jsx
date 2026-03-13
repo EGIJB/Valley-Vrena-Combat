@@ -10,6 +10,7 @@ import UnitRoster from './UnitRoster';
 import CombatArena from './CombatArena';
 import GlobalSettings from './GlobalSettings';
 import TeamBuilder from './TeamBuilder';
+import BattleReport from './BattleReport';
 
 // Importar utilidades
 import { moveUnitBetweenFactions } from '../utils/unitMover';
@@ -28,6 +29,7 @@ export default function App() {
   const [vrenas, setVrenas] = useState([]);
   const [allies, setAllies] = useState([]);
   const [enemies, setEnemies] = useState([]);
+  const [battleReport, setBattleReport] = useState(null);
   
   // Combate
   const [combatTeams, setCombatTeams] = useState({ p1: [], p2: [] });
@@ -89,7 +91,8 @@ export default function App() {
 
   // Iniciar combate
   const handleStartCombat = (p1, p2) => {
-    setCombatTeams({ p1, p2 });
+    // Guardar referencia de los equipos originales para el reporte
+    setCombatTeams({ p1, p2, originalP1: [...p1], originalP2: [...p2] });
     setView('combat');
   };
 
@@ -323,10 +326,25 @@ export default function App() {
             <CombatArena 
               p1Team={combatTeams.p1} 
               p2Team={combatTeams.p2} 
-              onEndCombat={() => setView('menu')} 
+              onEndCombat={(reportData) => {
+                setBattleReport(reportData); // Mostrar reporte en lugar de volver al menú
+              }}
               useCooldown={settings.enableCooldown}
             />
           )}
+
+          
+          {/* // ✅ Renderizar BattleReport si hay datos */}
+          {battleReport && (
+            <BattleReport 
+              data={battleReport} 
+              onClose={() => {
+                setBattleReport(null); // Limpiar reporte
+                setView('menu'); // Volver al menú principal
+              }} 
+            />
+          )}
+
         </div>
       </main>
 

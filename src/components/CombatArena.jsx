@@ -23,16 +23,32 @@ const CombatArena = ({ p1Team, p2Team, onEndCombat, useCooldown }) => {
   }, [logs]);
 
   // Detectar fin de combate
+  // En CombatArena.jsx, useEffect de fin de combate (~línea 25):
   useEffect(() => {
     const p1Alive = p1.some(u => u.currentHp > 0);
-    const p2Alive = p2.some(u => u.currentHp > 0);
+    const p2Alive = p2.some(u => u.currentHp >  0);
+    
     if (!p1Alive || !p2Alive) {
       setTimeout(() => {
-        alert(!p1Alive ? "¡Jugador 2 gana la partida!" : "¡Jugador 1 gana la partida!");
-        onEndCombat();
+        // Determinar ganador
+        const winner = !p1Alive ? 2 : !p2Alive ? 1 : 0;
+        
+        // Preparar datos para reporte
+        const reportData = {
+          p1,  // Estado final del equipo 1
+          p2,  // Estado final del equipo 2
+          logs, // Log completo de batalla
+          winner, // 1, 2, o 0 para empate
+          timestamp: new Date()
+        };
+        
+        // Llamar callback con datos (en lugar de onEndCombat directo)
+        if (onEndCombat) {
+          onEndCombat(reportData);
+        }
       }, 400);
     }
-  }, [p1, p2, onEndCombat]);
+  }, [p1, p2, logs, onEndCombat]);
 
   const addLog = (msg) => setLogs(prev => [...prev, msg]);
 
